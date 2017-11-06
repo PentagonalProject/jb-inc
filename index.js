@@ -24,6 +24,10 @@
 
 "use strict";
 
+/*!
+ * SYNC PARSE
+ */
+
 const is = require('./src/is');
 const spinner = new require('./src/spin');
 const clc = new require('cli-color');
@@ -66,7 +70,8 @@ const convertBaseURL = (url) => {
 
 const convertBrowseURL = (alpha, range) => {
     range = (is.numeric(range) ? (
-            parseInt(range) >= 500
+            // max = 100
+            parseInt(range) >= 100
                 ? 100
                 : (parseInt(range) < 1 ? 1 : parseInt(range))
         ) : 1);
@@ -254,16 +259,18 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
             getRange[a] = 0;
         }
 
-        if (getRange[a] >= 98) {
+        // start from offset 0, so decrease 1
+        // request increment 1, so decrease 1
+        if (getRange[a] >= (ranges.length-2)) {
             if (typeof alphas[a+1] === 'string') {
-                // writeData(
-                //     __dirname + '/Data/'+ alphas[a] +'.json',
-                //     JSON.stringify(resultListURI[a], null, 4),
-                //     function (err, fd) {
-                //         fn2(a+1, 0);
-                //     }
-                // );
-                fn2(a+1, 0);
+                writeData(
+                    __dirname + '/Data/'+ alphas[a] +'.json',
+                    JSON.stringify(resultListURI[a], null, 4),
+                    function (err, fd) {
+                        fn2(a+1, 0);
+                    }
+                );
+                // fn2(a+1, 0);
                 return;
             }
 
@@ -276,20 +283,20 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
         if (err === 404) {
             console.log(`End of result on found on ${alphas[a]} offset ${b} `);
             if (typeof alphas[a+1] === 'string') {
-                // if (typeof resultListURI[a] !== 'undefined') {
-                //     writeData(
-                //         __dirname + '/Data/' + alphas[a] + '.json',
-                //         JSON.stringify(resultListURI[a], null, 4),
-                //         function (err, fd) {
-                //             fn2(a+1, 0);
-                //         }
-                //     );
-                //     return;
-                // } else {
-                //    fn2(a+1, 0);
-                //    return;
-                // }
-                fn2(a+1, 0);
+                if (typeof resultListURI[a] !== 'undefined') {
+                    writeData(
+                        __dirname + '/Data/' + alphas[a] + '.json',
+                        JSON.stringify(resultListURI[a], null, 4),
+                        function (err, fd) {
+                            fn2(a+1, 0);
+                        }
+                    );
+                    // return;
+                } else {
+                   fn2(a+1, 0);
+                   // return;
+                }
+                // fn2(a+1, 0);
                 return;
             } else {
                 res('done');
