@@ -229,6 +229,8 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
     let ranges = new Array(100);
     let alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
     let fn = (posAlpha, posRange) => new Promise((resolve, reject) => {
+        // alphas[posAlpha]
+        // check files
         cSockRequest(
             convertBrowseURL(alphas[posAlpha], posRange+1),
             usedProxy.ip,
@@ -282,9 +284,12 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
                 //             fn2(a+1, 0);
                 //         }
                 //     );
+                //     return;
                 // } else {
-                    fn2(a+1, 0);
+                //    fn2(a+1, 0);
+                //    return;
                 // }
+                fn2(a+1, 0);
                 return;
             } else {
                 res('done');
