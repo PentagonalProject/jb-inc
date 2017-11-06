@@ -30,6 +30,7 @@ const clc = new require('cli-color');
 const {proxyCrawl} = require('p-proxies').ProxySearch;
 const {$} = require('p-proxies').jQuery;
 const {Client, ClientSock5} = require('p-proxies').Request;
+const fs = require('fs');
 
 const Config = {
     baseURL: '68747470733a2f2f7777772e6a6f627374726565742e636f2e6964',
@@ -64,8 +65,8 @@ const convertBaseURL = (url) => {
 };
 
 const convertBrowseURL = (alpha, range) => {
-    range = (is.numeric(range) ? '-' + (
-            parseInt(range) >= 100
+    range = (is.numeric(range) ? (
+            parseInt(range) >= 500
                 ? 100
                 : (parseInt(range) < 1 ? 1 : parseInt(range))
         ) : 1);
@@ -74,13 +75,7 @@ const convertBrowseURL = (alpha, range) => {
     return browseURL + (is.string(alpha) ? alpha.toLowerCase() : 'a') + '-' + range;
 };
 
-const Request = (url, options) => new Promise(
-    (resolve, reject) => Client(
-        url,
-        options,
-        (error, response, body) => error ? reject(error) : resolve({response, body})
-    )
-);
+const Request = (url, options) => new Promise((resolve, reject) => Client(url, options, (error, response, body) => resolve({error, response, body})));
 
 const RequestSock = (url, host, port, options) => new Promise(
     (resolve, reject) => ClientSock5(
@@ -88,11 +83,12 @@ const RequestSock = (url, host, port, options) => new Promise(
         options,
         host,
         port,
-        (error, response, body) => error ? reject(error) : resolve({response, body})
+        (error, response, body) => resolve({error, response, body})
     )
 );
 
 let usedCountry = [];
+let resultListURI = {};
 proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
     spinner.stop();
     let proxies = {};
@@ -113,34 +109,46 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
         proxyHost,
         proxyPort,
         options,
-        errorCallback
+        errorCallback,
+        resolveCallback
     ) => {
         spinner.start(
-            `\n[Connect to : ${url}-> Using Proxy: ${proxyHost}:${proxyPort}]`, 'cyan.italic'
+            `\n[Connect to : ${url} => Using Proxy: ${proxyHost}:${proxyPort}]`, 'cyan.italic'
         );
-        RequestSock(
+        Request(
             url,
-            proxyHost,
-            proxyPort,
+            // proxyHost,
+            // proxyPort,
             options
         ).then(
-            ({response, body}) => {
+            ({error, response, body}) => {
                 spinner.stop();
+                if (response.statusCode === 404) {
+                    errorCallback(404);
+                    return;
+                }
+                if (error) {
+                    errorCallback(error);
+                    return;
+                }
                 body = $(body).find('ul a.pagination-companies');
                 let result = [];
                 body.each(function() {
                     if (this.href) {
-                        result.push(convertBaseURL(this.href));
+                        let base = convertBaseURL(this.href);
+                        result.push(base);
                     }
                 });
                 console.log(
                     '\nLOG:',
                     '\n' + result.join('\n') + '\n'
                 );
+                if (typeof resolveCallback === 'function') {
+                    resolveCallback(result);
+                }
             }
         ).catch((error) => {
             spinner.stop();
-            errorCallback(error);
         });
     };
 
@@ -156,7 +164,12 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
     };
 
     let usedProxy = forProxy();
-    let errCb = (error) => {
+    let errCb = (a, r, resolveCallback, rejectCallback) => (error) => {
+        if (error === 404) {
+            rejectCallback(404);
+            return;
+        }
+
         console.error(clc.red('\nError: ' + error.message) + ' retrying ....');
         if (error !== true) {
             pos++;
@@ -192,21 +205,102 @@ proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
         }
 
         cSockRequest(
-            convertBrowseURL(),
+            convertBrowseURL(a, r),
             usedProxy.ip,
             usedProxy.port,
             {},
-            errCb
+            errCb(a, r, resolveCallback, rejectCallback)
         );
     };
 
-    cSockRequest(
-        convertBrowseURL(),
-        usedProxy.ip,
-        usedProxy.port,
-        {},
-        errCb
-    );
+    const writeData = (fileName, Data, callback) => {
+        fs.open(fileName, 'w+', function (err, fd) {
+            if (typeof callback !== 'function') {
+                callback = () => {};
+            }
+            if (!err) {
+                fs.write(fd, Data, callback);
+                return;
+            }
+            callback();
+        });
+    };
+
+    let ranges = new Array(100);
+    let alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
+    let fn = (posAlpha, posRange) => new Promise((resolve, reject) => {
+        cSockRequest(
+            convertBrowseURL(alphas[posAlpha], posRange+1),
+            usedProxy.ip,
+            usedProxy.port,
+            {},
+            errCb(alphas[posAlpha], posRange+1, resolve, reject),
+            resolve,
+            reject
+        );
+    });
+
+    let getRange = {};
+    let fn2 = (a, b) => new Promise((res, rej) => fn(a, b).then((result) => {
+        if (!is.array(resultListURI[a])) {
+            resultListURI[a] = [];
+        }
+        for (let d =0; result.length > d;d++) {
+            resultListURI[a].push(result[d]);
+        }
+        if (typeof getRange[a] === 'undefined') {
+            getRange[a] = 0;
+        }
+
+        if (getRange[a] >= 98) {
+            if (typeof alphas[a+1] === 'string') {
+                // writeData(
+                //     __dirname + '/Data/'+ alphas[a] +'.json',
+                //     JSON.stringify(resultListURI[a], null, 4),
+                //     function (err, fd) {
+                //         fn2(a+1, 0);
+                //     }
+                // );
+                fn2(a+1, 0);
+                return;
+            }
+
+            res(result);
+            return;
+        }
+        getRange[a] = b;
+        fn2(a, b+1);
+    }).catch((err) => {
+        if (err === 404) {
+            console.log(`End of result on found on ${alphas[a]} offset ${b} `);
+            if (typeof alphas[a+1] === 'string') {
+                // if (typeof resultListURI[a] !== 'undefined') {
+                //     writeData(
+                //         __dirname + '/Data/' + alphas[a] + '.json',
+                //         JSON.stringify(resultListURI[a], null, 4),
+                //         function (err, fd) {
+                //             fn2(a+1, 0);
+                //         }
+                //     );
+                // } else {
+                    fn2(a+1, 0);
+                // }
+                return;
+            } else {
+                res('done');
+            }
+        }
+
+        rej(err);
+    }));
+
+    fn2(0, 0).then((err) => {
+        console.log(err);
+        require('./ParseAllData')(resultListURI);
+    }).catch((err) => {
+        console.log(err);
+        process.exit();
+    });
 
     // console.log(res);
 }).catch((err) => {
