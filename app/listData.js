@@ -27,7 +27,6 @@ const clc = require('cli-color');
 
 const redisClient = require('redis').createClient();
 const {RequestSock, Request} = require('../src/request');
-const {convertBrowseURL, convertCompanyURL} = require('../src/url');
 const sha1 = require('../src/sha1');
 const fs = require('fs');
 
@@ -85,12 +84,14 @@ let cSockRequest = (
         let details = {
             name: name,
             phone: "",
+            url: url,
+            email: [],
             industry: "",
             working_hours: "",
+            location: "",
             employees: "",
             benefits: "",
             language: "",
-            email: [],
             description: "",
         };
         let founds = false;
@@ -107,7 +108,10 @@ let cSockRequest = (
         details.description =  details.description
             ? $('<textarea />').html(details.description).text()
             : "";
-
+        details.location = strip_tags(body.find('.zeroPadding .company-map-location-add').html());
+        details.location = details.location
+            ? $('<textarea />').html(details.location).text().replace(/^\s*/g, '').replace(/\s*$/g, '')
+            : "";
         if (details.description !== '') {
             details.description.toString()
                 .replace(
@@ -148,13 +152,17 @@ let cSockRequest = (
             founds = true;
             if (title.match(/(?:Tele)?phone/ig)) {
                 if (!desc.match(/xx\s*/ig) && desc.replace(/\s*/, '') !== '-') {
-                    desc = desc.replace(/^\s*/g, '').replace(/\s*$/, '');
+                    desc = desc.replace(/^\s*/g, '')
+                        .replace(/\s*$/, '')
+                        .replace(/^\s*Telp?\s*[:.]?/i,'');
                     if (desc.match(/^\s*62/)) {
                         desc = desc.replace(/^\s*62([^0-9]+)?/, '+62 ')
                     } else if (desc.match(/^\s*[1-9]\s*[0-9]/g)) {
                         desc = `+62 ${desc}`
                     } else if (!desc.match(/-/) && desc.match(/^[0]/)) {
                         desc = `+62 ${desc.substr(1)}`;
+                    } else if (!desc.match(/^\s*[0]62/)) {
+                        desc = desc.replace(/^\s*[0]62\s*/, '+62 ')
                     }
                     details.phone = desc;
                 }
@@ -210,7 +218,9 @@ const attach = (
     let proxyPort = proxyHost ? CurrentProxy.port : null;
     let isUsedProxy = proxyPort !== null;
     if (! invalid) {
-        console.log('☴  Company: ' + clc.blue(name));
+        if (global.verbose) {
+            console.log('☴  Company: ' + clc.blue(name));
+        }
     }
 
     cSockRequest(
@@ -277,12 +287,12 @@ const attach = (
     )
 };
 
-const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject) => new Promise((res, rej) => {
+const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject) => new Promise((res) => {
     let mustBeRequest = [];
     let count = -1;
     let Total = 0;
     let numberPerAlpha = ! CurrentProxy
-        ? 13
+        ? 20
         : 5;
     for (let url in Object) {
         if (!Object.hasOwnProperty(url)) {
@@ -321,13 +331,16 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             }
             TLength++;
         }
-
-        console.log('-----------------------------------------');
-        console.log(clc.cyan.bold(`\nRequesting async request at ${TLength} companies.\n`));
+        if (global.verbose) {
+            console.log('-----------------------------------------');
+            console.log(clc.cyan.bold(`\nRequesting async request at ${TLength} companies.\n`));
+        }
         let csvExporter = (result) => {
             totalExecuted++;
             if (is.object(result)) {
-                console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
+                if (global.verbose) {
+                    console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
+                }
                 let csvData = "";
                 for (let e in result) {
                     if (!result.hasOwnProperty(e)) {
@@ -350,7 +363,9 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
                         // pass
                     });
             } else {
-                console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
+                if (global.verbose) {
+                    console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
+                }
             }
         };
 
@@ -358,6 +373,19 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             if (!mustBeRequest[curr].hasOwnProperty(name)) {
                 continue;
             }
+
+            // todo
+            attach({name, url: mustBeRequest[curr][name]},
+                {
+                    timeout: 7000,
+                    socketTimeOut: 2500,
+                },
+                (error) => {
+                    console.error(error);
+                    totalExecuted++;
+                },
+                csvExporter
+            );
             // console.log(mustBeRequest[curr][name]);
             redisClient.get(sha1(mustBeRequest[curr][name]), function (err, value) {
                 if (!err && is.string(value)) {
@@ -366,15 +394,15 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
                         if (is.array(value)) {
                             csvExporter(name);
                             return;
-                        } else if (is.object(value) && is.string(value.name)) {
+                        } else if (is.object(value) && is.string(value.name) && is.string(value.url)) {
                             csvExporter(value);
                             return;
                         }
                     } catch (error) {
-                        err = error;
+                        // err = error;
                     }
                 }
-                // todo
+
                 attach({name, url: mustBeRequest[curr][name]},
                     {
                         timeout: 7000,
@@ -389,9 +417,11 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             });
         }
 
-        console.log();
-        // spinner.start(clc.cyan.bold('Please wait'));
-        console.log();
+        if (!global.verbose) {
+            console.log();
+            spinner.start(clc.cyan.bold('Please wait'));
+            console.log();
+        }
         let totalExecuted = 0;
         let uInterval = setInterval(() => {
             if (totalExecuted >= TLength) {
@@ -450,6 +480,7 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
                 if (! is.string(arrayOffset[currentOffset])
                     || !is.object(ObjectURI[arrayOffset[currentOffset]])
                 ) {
+                    spinner.stop();
                     // console.log(currentOffset);
                     resolve(true);
                     return;
@@ -468,6 +499,7 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
                 if (! is.string(arrayOffset[currentOffset])
                     || !is.object(ObjectURI[arrayOffset[currentOffset]])
                 ) {
+                    spinner.stop();
                     resolve(true);
                     return;
                 }
@@ -487,10 +519,10 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
     callItAll();
 });
 
-module.exports = (ObjectURI,Proxy, Proxies) => (
+module.exports = (ObjectURI, Proxy, Proxies) => (
     new Promise((resolve, reject) => writeData(
         dataPath,
-        '"Name", "Phone", "Industry", "Working Hours", "Employee Size", "Benefits", "Language", "Email", "Description"\r\n',
+        '"Name", "Phone", "Url", "Email", "Industry", "Working Hours", "Location", "Employee Size", "Benefits", "Language", "Description"\r\n',
         function (err) {
         resolve(ProcessAll(ObjectURI,Proxy, Proxies));
     })).then((cb) => cb).catch((err) => {
