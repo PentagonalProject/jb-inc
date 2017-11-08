@@ -47,7 +47,7 @@ let Is = function () {
         offset = array.indexOf(offset);
         return offset > -1 ? offset : false;
     };
-    this.array_key_exists = (offset, array) => {
+    this.array_contains = (offset, array) => {
         return this.array_search(offset, array) !== false;
     };
     this.undefined = (arg) => typeof arg === 'undefined';

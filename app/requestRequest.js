@@ -66,7 +66,7 @@ let Resolver = (
             if (global.verbose) {
                 console.info('☴  Save   : '+clc.cyan(`data with key: `) + clc.blue(sha1(url)) + clc.cyan(` to cache`));
             }
-            redisClient.set(sha1(url), JSON.stringify(result), 'EX', 3600*24*15);
+            redisClient.set(sha1(url), JSON.stringify(result), 'EX', (360 * 24 * 7 * 4));
         } catch (err) {
             // pass
         }

@@ -182,7 +182,7 @@ let cSockRequest = (
             sha1(baseUrl),
             founds ? JSON.stringify(details) : JSON.stringify([name]),
             'EX',
-            360* 24 * 7 *4
+            (360 * 24 * 7 * 4)
         );
         resolveCallback(founds ? details : name);
     }).catch(errorCallback);
@@ -277,7 +277,7 @@ const attach = (
     )
 };
 
-const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promise((res, rej) => {
+const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject) => new Promise((res, rej) => {
     let mustBeRequest = [];
     let count = -1;
     let Total = 0;
@@ -404,7 +404,7 @@ const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promi
 
     init();
 }).then((Result) => {
-    resolve({Result: Result,  currentOffset: currentOffset});
+    resolve({Result: Result, offset: currentOffset, arrayKeySet: arrayKeySet});
 }).catch((err) => {
     console.log(err);
     reject(err);
@@ -424,34 +424,55 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
     Proxy = null;
     let arrayOffset = [];
     let callItAll = () => {
-        if (is.undefined(currentOffset) || ! is.array_key_exists(currentOffset, arrayOffset)) {
+
+        if (! is.number(currentOffset)
+            || ! is.string(arrayOffset[currentOffset])
+        ) {
             resolve(true);
             return;
         }
 
         return RequestingPerAlpha(
             currentOffset,
-            ObjectURI[currentOffset],
-            ({Result, currentOffset}) => {
+            arrayOffset[currentOffset],
+            ObjectURI[arrayOffset[currentOffset]],
+            ({Result, offset, arrayKeySet}) => {
+                // console.log(ObjectURI[arrayOffset[currentOffset+1]]);
+                // console.log(currentOffset+1);
+                // console.log(arrayOffset[currentOffset]);
+                // process.exit();
+
                 // clear
-                delete ObjectURI[currentOffset];
-                currentOffset++;
-                if (is.undefined(currentOffset) || !is.array_key_exists(currentOffset, ObjectURI)) {
+                delete ObjectURI[arrayKeySet];
+
+                currentOffset++; // = offset+1;
+
+                if (! is.string(arrayOffset[currentOffset])
+                    || !is.object(ObjectURI[arrayOffset[currentOffset]])
+                ) {
+                    // console.log(currentOffset);
                     resolve(true);
                     return;
                 }
-                return callItAll
+
+                return callItAll();
             },
             (err) => {
-                console.log(err);
+                // console.log(err);
+
                 // clear
-                delete ObjectURI[currentOffset];
+                delete ObjectURI[arrayOffset[currentOffset]];
+
                 currentOffset++;
-                if (is.undefined(currentOffset) || !is.array_key_exists(currentOffset, ObjectURI)) {
+
+                if (! is.string(arrayOffset[currentOffset])
+                    || !is.object(ObjectURI[arrayOffset[currentOffset]])
+                ) {
                     resolve(true);
                     return;
                 }
-                return callItAll
+
+                return callItAll();
             }
         );
     };
@@ -462,7 +483,7 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
         }
     }
 
-    let currentOffset = arrayOffset[0];
+    let currentOffset = 0;
     callItAll();
 });
 
