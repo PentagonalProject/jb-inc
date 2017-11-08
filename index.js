@@ -24,297 +24,142 @@
 
 "use strict";
 
+global.verbose = false;
+const proxyCountry = [
+    'SG',
+    'HK',
+    'US',
+    'ID',
+    'TW',
+    'AU',
+    'DE',
+    'CA',
+    'UK'
+];
+
 /*!
  * SYNC PARSE
  */
+global.spinner = new require('./src/spin');
+let spinner = global.spinner;
 
 const is = require('./src/is');
-const spinner = new require('./src/spin');
+const {RequestSock, Request} = require('./src/request');
+const cSockRequest = require('./app/requestRequest');
+const {convertBrowseURL, convertBaseURL} = require('./src/url');
+const writeData = require('./src/writer');
+
 const clc = new require('cli-color');
-const {proxyCrawl} = require('p-proxies').ProxySearch;
 const {$} = require('p-proxies').jQuery;
-const {Client, ClientSock5} = require('p-proxies').Request;
 const fs = require('fs');
+const companyPath = __dirname + '/Data/CompanyURL.json';
 
-const Config = {
-    baseURL: '68747470733a2f2f7777772e6a6f627374726565742e636f2e6964',
-    baseBrowsURL: '68747470733a2f2f7777772e6a6f627374726565742e636f2e69642f656e2f636f6d70616e6965732f62726f7773652d',
-    proxyCountry: [
-        'US',
-        'SG',
-        'AU',
-        'TW',
-        'ID',
-        'DE',
-        'CA',
-        'HK',
-        'UK'
-    ],
-};
+/** @type Promise */
+const ProxyCall = require('./app/listProxies');
+/** @type Promise */
+const CompaniesURI = require('./app/listCompanyURI');
 
-let browseURL = null;
-let baseURL = null;
 
-// #
-spinner.start('\nGetting Proxy List', 'blue.bold.italic');
-
-const convertBaseURL = (url) => {
-    url = is.string(url) ? url.replace(/^\/?/, '/') : '';
-    if (baseURL) {
-        return baseURL + url;
+let nocache = false;
+for (let i = 2; process.argv.length > i; i++) {
+    nocache = !!(typeof process.argv[i] === 'string' && process.argv[i].toLowerCase().match(/no-?cache/i));
+}
+const processorCompanies = (proxyCountry) => (proxies) => {
+    if (global.verbose) {
+        console.log('');
+        for (let code in proxies) {
+            if (!proxies.hasOwnProperty(code)) {
+                continue;
+            }
+            console.log(clc.cyan(`Found proxies from (${code}) with ${proxies[code].length} total.`));
+        }
+    }
+    if (!nocache) {
+        try {
+            let stats = fs.statSync(companyPath);
+            if (((new Date().getTime() - stats.mtime) / 1000) < 24 * 3600 * 3) {
+                let ObjectURI = fs.readFileSync(companyPath);
+                ObjectURI = JSON.parse(ObjectURI.toString());
+                let Proxy = null;
+                for (let code in proxies) {
+                    if (proxies.hasOwnProperty(code)) {
+                        Proxy = proxies[code];
+                        Proxy['code'] = code;
+                        break;
+                    }
+                }
+                process.stdout.write(clc.cyan(`Cache data found! Using cache data as source`));
+                return (new Promise((resolve, reject) => resolve(ObjectURI))).then((ObjectURI) => {
+                    return {ObjectURI, Proxy, Proxies: proxies};
+                });
+            }
+        } catch (err) {
+            // console.log(err);
+            // process.exit();
+            // pass
+        }
     }
 
-    baseURL = Buffer.from(Config.baseURL, 'hex').toString('utf8').replace(/\/+$/, '');
-    return baseURL + url;
+    return CompaniesURI(
+        proxyCountry,
+        proxies,
+        {
+            timeout: 4000,
+            socketTimeOut: 1000,
+        }
+    ).then(({ObjectURI, Proxy, Proxies}) => {
+        return {ObjectURI, Proxy, Proxies};
+    });
 };
 
-const convertBrowseURL = (alpha, range) => {
-    range = (is.numeric(range) ? (
-            // max = 100
-            parseInt(range) >= 100
-                ? 100
-                : (parseInt(range) < 1 ? 1 : parseInt(range))
-        ) : 1);
-    // [a-z]-([1-9]([0-9])?|100)
-    browseURL = browseURL || Buffer.from(Config.baseBrowsURL, 'hex').toString('utf8');
-    return browseURL + (is.string(alpha) ? alpha.toLowerCase() : 'a') + '-' + range;
-};
+const processorData = ({ObjectURI, Proxy, Proxies}) => {
+    if (!global.verbose) {
+        spinner.start('Processing all available companies', 'blue.bold.italic');
+    }
 
-const Request = (url, options) => new Promise((resolve, reject) => Client(url, options, (error, response, body) => resolve({error, response, body})));
-
-const RequestSock = (url, host, port, options) => new Promise(
-    (resolve, reject) => ClientSock5(
-        url,
-        options,
-        host,
-        port,
-        (error, response, body) => resolve({error, response, body})
-    )
-);
-
-let usedCountry = [];
-let resultListURI = {};
-proxyCrawl(Config.proxyCountry, 300).then(async (proxy) => {
-    spinner.stop();
     let proxies = {};
-    for (let key in proxy) {
-        if (!proxy.hasOwnProperty(key)) {
+    for (let code in Proxies) {
+        if (!Proxies.hasOwnProperty(code)) {
             continue;
         }
-        proxies[key] = [];
-        for (let i =0; proxy[key].length > i ;i++) {
-            if (proxy[key][i]['sock5']) {
-                proxies[key].push(proxy[key][i]);
+        for (let increment = 0; Proxies[code].length > increment;increment++) {
+            if (is.object(Proxies[code][increment])) {
+                if (!is.array(proxies[code])) {
+                    proxies[code] = [];
+                }
+                proxies[code].push(Proxies[code][increment]);
             }
         }
+        // clear
+        delete Proxies[code];
     }
 
-    let cSockRequest = (
-        url,
-        proxyHost,
-        proxyPort,
-        options,
-        errorCallback,
-        resolveCallback
-    ) => {
-        spinner.start(
-            `\n[Connect to : ${url} => Using Proxy: ${proxyHost}:${proxyPort}]`, 'cyan.italic'
-        );
-        Request(
-            url,
-            // proxyHost,
-            // proxyPort,
-            options
-        ).then(
-            ({error, response, body}) => {
-                spinner.stop();
-                if (response.statusCode === 404) {
-                    errorCallback(404);
-                    return;
-                }
-                if (error) {
-                    errorCallback(error);
-                    return;
-                }
-                body = $(body).find('ul a.pagination-companies');
-                let result = [];
-                body.each(function() {
-                    if (this.href) {
-                        let base = convertBaseURL(this.href);
-                        result.push(base);
-                    }
-                });
-                console.log(
-                    '\nLOG:',
-                    '\n' + result.join('\n') + '\n'
-                );
-                if (typeof resolveCallback === 'function') {
-                    resolveCallback(result);
-                }
-            }
-        ).catch((error) => {
-            spinner.stop();
-        });
-    };
+    // @todo to processing parse data
+    // console.log(Proxies);
+    // console.log(ObjectURI);
+    // console.log(Proxy);
+};
 
-    let pos = 1;
-    let code = Config.proxyCountry[0];
-    let forProxy = () => {
-        if (typeof proxies[code] !== 'object') {
-            return null;
+spinner.start('\nGetting Proxy List', 'blue.bold.italic');
+ProxyCall(proxyCountry, 100000)
+    .then((proxies) => {
+        spinner.stop();
+        if (!global.verbose) {
+            spinner.start('Getting company URL', 'blue.bold.italic');
         }
-        return typeof proxies[code][pos] === 'object'
-            ? proxies[code][pos]
-            : false;
-    };
-
-    let usedProxy = forProxy();
-    let errCb = (a, r, resolveCallback, rejectCallback) => (error) => {
-        if (error === 404) {
-            rejectCallback(404);
-            return;
-        }
-
-        console.error(clc.red('\nError: ' + error.message) + ' retrying ....');
-        if (error !== true) {
-            pos++;
-            usedProxy = forProxy();
-            if (!usedProxy) {
-                for (let o = 0; Config.proxyCountry.length > o; o++) {
-                    if (usedCountry.indexOf(Config.proxyCountry[o]) > -1
-                    || code === Config.proxyCountry[o]
-                    ) {
-                        continue;
-                    }
-
-                    pos = -1;
-                    code = Config.proxyCountry[o];
-                }
+        return processorCompanies(proxyCountry)(proxies)
+    })
+    .then(({ObjectURI, Proxy, Proxies}) => {
+        spinner.stop();
+        writeData(
+            companyPath,
+            JSON.stringify(ObjectURI, null, 2),
+            () => {
+                return processorData({ObjectURI, Proxy, Proxies})
             }
-
-            if (!usedProxy) {
-                pos++;
-                usedProxy = forProxy();
-            }
-
-            if (!usedProxy) {
-                console.warn(
-                    '\n' + clc.cyan('-------------------------------------------------------'),
-                    `\n\n\n         ${clc.red('PROCESS STOPPED! NO PROXY CAN BE USED')}\n\n`,
-                    '\n' + clc.cyan('-------------------------------------------------------')
-                    + '\n\n'
-                );
-                process.exit();
-                return;
-            }
-        }
-
-        cSockRequest(
-            convertBrowseURL(a, r),
-            usedProxy.ip,
-            usedProxy.port,
-            {},
-            errCb(a, r, resolveCallback, rejectCallback)
         );
-    };
-
-    const writeData = (fileName, Data, callback) => {
-        fs.open(fileName, 'w+', function (err, fd) {
-            if (typeof callback !== 'function') {
-                callback = () => {};
-            }
-            if (!err) {
-                fs.write(fd, Data, callback);
-                return;
-            }
-            callback();
-        });
-    };
-
-    let ranges = new Array(100);
-    let alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
-    let fn = (posAlpha, posRange) => new Promise((resolve, reject) => {
-        // alphas[posAlpha]
-        // check files
-        cSockRequest(
-            convertBrowseURL(alphas[posAlpha], posRange+1),
-            usedProxy.ip,
-            usedProxy.port,
-            {},
-            errCb(alphas[posAlpha], posRange+1, resolve, reject),
-            resolve,
-            reject
-        );
+    })
+    .catch((err) => {
+        spinner.stop();
+        console.log(err)
     });
-
-    let getRange = {};
-    let fn2 = (a, b) => new Promise((res, rej) => fn(a, b).then((result) => {
-        if (!is.array(resultListURI[a])) {
-            resultListURI[a] = [];
-        }
-        for (let d =0; result.length > d;d++) {
-            resultListURI[a].push(result[d]);
-        }
-        if (typeof getRange[a] === 'undefined') {
-            getRange[a] = 0;
-        }
-
-        // start from offset 0, so decrease 1
-        // request increment 1, so decrease 1
-        if (getRange[a] >= (ranges.length-2)) {
-            if (typeof alphas[a+1] === 'string') {
-                writeData(
-                    __dirname + '/Data/'+ alphas[a] +'.json',
-                    JSON.stringify(resultListURI[a], null, 4),
-                    function (err, fd) {
-                        fn2(a+1, 0);
-                    }
-                );
-                // fn2(a+1, 0);
-                return;
-            }
-
-            res(result);
-            return;
-        }
-        getRange[a] = b;
-        fn2(a, b+1);
-    }).catch((err) => {
-        if (err === 404) {
-            console.log(`End of result on found on ${alphas[a]} offset ${b} `);
-            if (typeof alphas[a+1] === 'string') {
-                if (typeof resultListURI[a] !== 'undefined') {
-                    writeData(
-                        __dirname + '/Data/' + alphas[a] + '.json',
-                        JSON.stringify(resultListURI[a], null, 4),
-                        function (err, fd) {
-                            fn2(a+1, 0);
-                        }
-                    );
-                    // return;
-                } else {
-                   fn2(a+1, 0);
-                   // return;
-                }
-                // fn2(a+1, 0);
-                return;
-            } else {
-                res('done');
-            }
-        }
-
-        rej(err);
-    }));
-
-    fn2(0, 0).then((err) => {
-        console.log(err);
-        require('./ParseAllData')(resultListURI);
-    }).catch((err) => {
-        console.log(err);
-        process.exit();
-    });
-
-    // console.log(res);
-}).catch((err) => {
-    console.log(err);
-});

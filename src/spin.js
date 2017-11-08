@@ -36,7 +36,13 @@ process.on('SIGINT', () => {
     process.exit();
 });
 
+let lastSpinner = '';
 spin.prototype.start = function(text, color, periodLength = 3, spinnerType = 21) {
+    // stop last spinned
+    if (lastSpinner && typeof lastSpinner.stop === 'function') {
+        lastSpinner.stop();
+    }
+    lastSpinner = this;
     periodLength = is.boolean(periodLength) ? 3 : periodLength;
     periodLength = is.number(periodLength)
         && periodLength > 0

@@ -22,6 +22,30 @@
  * SOFTWARE.
  */
 
-module.exports = (object) => {
+const {proxyCrawl} = require('p-proxies').ProxySearch;
 
-};
+module.exports = (proxyCountry, cacheTime = 300, verbose = false) => new Promise((resolve, reject) => {
+    if (typeof proxyCountry.length === "number" && proxyCountry.length === 0) {
+        resolve({});
+        return;
+    }
+
+    proxyCrawl(proxyCountry, cacheTime, verbose)
+        .then((proxy) => {
+            let proxies = {};
+            for (let key in proxy) {
+                if (!proxy.hasOwnProperty(key)) {
+                    continue;
+                }
+                proxies[key] = [];
+                for (let i =0; proxy[key].length > i ;i++) {
+                    if (proxy[key][i]['sock5']) {
+                        proxies[key].push(proxy[key][i]);
+                    }
+                }
+            }
+            resolve(proxy);
+        }).catch((err) => {
+            reject(err);
+        })
+});
