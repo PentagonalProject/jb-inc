@@ -61,4 +61,4 @@ typings/
 # ignore package lock
 package-lock.json
 Data/*.json
-Data/*.csv
+*.csv
