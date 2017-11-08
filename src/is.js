@@ -40,6 +40,7 @@ let Is = function () {
     this.array  =  (arg) => this.objectTypeof(arg) === '[object Array]';
     this.object = (arg) => this.objectTypeof(arg) === '[object Object]';
     this.function = this.fn;
+    this.callable = this.fn;
     // alias
     this.fn =     (arg) => typeof arg === 'function';
     this.commonObject = (arg) => typeof arg === 'object';

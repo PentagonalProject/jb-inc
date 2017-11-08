@@ -26,7 +26,10 @@ const is = require('../src/is');
 const clc = new require('cli-color');
 const {convertBrowseURL} = require('../src/url');
 const cSockRequest = require('./requestRequest');
-
+const redis = require('redis');
+const redisClient = redis.createClient();
+const sha1 = require('../src/sha1');
+let keyProxyCache = 'jbinc:proxy_' + sha1('current_proxy');
 let usedCountry = [];
 let ObjectURI = {};
 module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver, rejected) => {
@@ -40,8 +43,9 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
     }
 
     const startPosition = 1;
-    const ranges      = new Array(100);
-    const alphas      = 'abcdefghijklmnopqrstuvwxyz'.split('');
+    const ranges = new Array(100);
+    const alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
+
     // var
     let currentIncrementRanges = {};
     let getCurrentProxy = () => {
@@ -57,10 +61,26 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
         return false;
     };
 
-    let currentOffset   = 0;
-    let currentCode     = proxyCountry[0];
+    let lastProxy = null;
+    let currentOffset = 0;
+    let currentCode = proxyCountry[0];
+    let lastHash = {};
     let Proxy = getCurrentProxy();
+    redisClient.get(keyProxyCache, function (err, value) {
+        if (is.string(value)) {
+            try {
+                value = JSON.parse(value);
+                if (is.object(value)) {
+                    currentOffset = -1;
+                    Proxy = value;
+                }
+            } catch (err) {
+            }
+        }
+    });
 
+    let proxyMustBeSkipped = false;
+    let retry = 0;
     const createIncrementCurrentProxy = () => {
         currentOffset++;
         Proxy = getCurrentProxy();
@@ -80,18 +100,19 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 break;
             }
         } else if (typeof Proxies[currentCode] === 'object'
-            && typeof Proxies[currentCode][currentOffset -1] === 'object'
+            && typeof Proxies[currentCode][currentOffset - 1] === 'object'
         ) {
-            delete Proxies[currentCode][currentOffset -1];
+            delete Proxies[currentCode][currentOffset - 1];
         }
 
         if (!Proxy) {
             currentOffset++;
             Proxy = getCurrentProxy();
             if (typeof Proxies[currentCode] === 'object'
-                && typeof Proxies[currentCode][currentOffset -1] === 'object'
+                && typeof Proxies[currentCode][currentOffset - 1] === 'object'
             ) {
-                delete Proxies[currentCode][currentOffset -1];
+                delete Proxies[currentCode][currentOffset - 1];
+                // set cache
             }
         }
 
@@ -107,69 +128,153 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
      * @param reject
      * @param errorResolver
      */
-    let errorCallBackResolver = (
-        posAlpha,
-        posRange,
-        resolve,
-        reject,
-        errorResolver
-    ) => (error) => {
+    let errorCallBackResolver = (posAlpha,
+                                 posRange,
+                                 resolve,
+                                 reject,
+                                 errorResolver) => (error) => {
         if (error === 404) {
             reject(404);
             return;
         }
-        if (global.verbose) {
-            if (error.message.toString().match(/ECONNREFUSED/)) {
-                console.error(clc.red('\nError: Socket connection refused') + ' retrying ....');
-            } else {
-                switch (error.message) {
-                    case 'ESOCKETTIMEDOUT':
-                        console.error(clc.red('\nError: Socket connection time out') + ' retrying ....');
-                        break;
-                    default:
-                        console.error(clc.red('\nError: ' + error.message) + ' retrying ....');
-                        break;
-                }
+
+        let needToHandle = false;
+        let isTimeOut = false;
+        if (error.message.toString().match(/ECONNREFUSED/)) {
+            needToHandle = true;
+            if (global.verbose) {
+                console.error(clc.red('☴  Error  : ') + 'Socket connection refused');
+            }
+        } else if (error.message.toString().match(/authentication\s*failed/i)) {
+            if (global.verbose) {
+                console.error(clc.red('☴  Error  : ') + 'Need proxy authentication');
+            }
+        } else {
+            switch (error.message) {
+                case 'ETIMEDOUT':
+                case 'ESOCKETTIMEDOUT':
+                    if (global.verbose) {
+                        console.error(clc.red('☴  Error  : ')
+                            + (
+                                error.message === 'ETIMEDOUT'
+                                ? 'Request '
+                                : 'Socket '
+                            )
+                            + 'connection time out');
+                    }
+                    isTimeOut = true;
+                    needToHandle = true;
+                    break;
+                default:
+                    if (global.verbose) {
+                        console.error(clc.red('☴  Error  : ') + (error.message));
+                    }
+                    break;
             }
         }
 
-        Proxy = createIncrementCurrentProxy();
-        if (error !== true && ! Proxy) {
-            // reject(new Error('Proxy has empty!'));
-            errorResolver(posAlpha, posRange, resolve, reject);
-            return;
+        if (!proxyMustBeSkipped) {
+            if (!isTimeOut || retry > 9) {
+                Proxy = createIncrementCurrentProxy();
+            }
         }
 
+        if (!getCurrentProxy()) {
+            proxyMustBeSkipped = true;
+        }
+
+        if (error) {
+            if (needToHandle) {
+                if (retry > 9) {
+                    let oldRetry = retry;
+                    retry = 0;
+                    if (!Proxy) {
+                        reject(new Error(`Error: ${error.message} Unhandled after ${oldRetry + 1} request`));
+                    }
+                    lastProxy = null;
+                    redisClient.del(keyProxyCache);
+                    errorResolver(posAlpha, posRange, resolve, reject);
+                    return;
+                }
+                retry++;
+                console.error(clc.blue('☴  Worker : ') + clc.italic(`Retrying ${retry} times .....`));
+                // reject(new Error('Proxy has empty!'));
+                errorResolver(posAlpha, posRange, resolve, reject);
+                return;
+            }
+            if (!Proxy) {
+                // if got error and unhandled
+                reject(error);
+                return;
+            }
+        }
+
+        console.error(clc.blue('☴  Worker : ') + clc.italic(`Retrying .....`));
         errorResolver(posAlpha, posRange, resolve, reject);
     };
 
     const createCSocksRequest = (posAlpha, posRange, resolve, reject) => {
-        cSockRequest(
-            convertBrowseURL(alphas[posAlpha], posRange),
-            options,
-            errorCallBackResolver(
-                alphas[posAlpha],
-                posRange,
-                resolve,
-                reject,
-                (posAlpha, posRange) => {
-                    createCSocksRequest(posAlpha, posRange, resolve, reject)
-                }
-            ),
-            resolve,
-            Proxy ? Proxy.ip : null,
-            Proxy ? Proxy.port : null
-        );
+        let currentURI = convertBrowseURL(alphas[posAlpha], posRange);
+        let proxyHost = Proxy && Proxy.ip ? Proxy.ip : null;
+        let proxyPort = Proxy && Proxy.port ? Proxy.port : null;
+        let isUseProxy = !!(proxyHost && proxyPort);
+        let req = () => {
+            cSockRequest(
+                currentURI,
+                options,
+                errorCallBackResolver(
+                    posAlpha,
+                    posRange,
+                    (args) => {
+                        retry = 0;
+                        return resolve(args);
+                    },
+                    reject,
+                    (posAlpha, posRange) => {
+                        createCSocksRequest(posAlpha, posRange, (args) => {
+                            retry = 0;
+                            return resolve(args);
+                        }, reject)
+                    }
+                ),
+                (args) => {
+                    retry = 0;
+                    return resolve(args);
+                },
+                isUseProxy ? proxyHost : null,
+                isUseProxy ? proxyPort : null
+            );
+        };
+        redisClient.get(sha1(currentURI), (error, value) => {
+            if (error || !is.string(value)) {
+                req();
+                return;
+            }
+            try {
+                value = JSON.parse(value);
+            } catch (err) {
+                req();
+                return;
+            }
+            console.info(`☴  Cache  : ${clc.cyan(`Found for ${currentURI}`)}`);
+            resolve(value);
+        });
     };
 
     let callInit = (posAlpha, posRange) => (new Promise(
-        (resolve, reject) => createCSocksRequest(
-            posAlpha,
-            (posRange < startPosition ? startPosition : posRange),
-            resolve,
-            reject
-        )).then((result) => {
-
+            (resolve, reject) => {
+                createCSocksRequest(
+                    posAlpha,
+                    (posRange < startPosition ? startPosition : posRange),
+                    resolve,
+                    reject
+                )
+            }).then((result) => {
+            let cProxy = getCurrentProxy();
+            if (cProxy && cProxy !== lastProxy) {
+                lastProxy = cProxy;
+                redisClient.set(keyProxyCache, JSON.stringify(lastProxy), 'EX', 3600);
+            }
             let currentAlphabet = alphas[posAlpha];
             if (!is.array(ObjectURI[currentAlphabet])) {
                 ObjectURI[currentAlphabet] = {};
@@ -183,9 +288,22 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 ObjectURI[currentAlphabet][name] = result[name];
             }
 
+            // check hash
+            let currentHash = sha1(JSON.stringify(ObjectURI[currentAlphabet]));
+            if (typeof lastHash[currentAlphabet] !== 'undefined' && currentHash === lastHash[currentAlphabet]) {
+                console.log(
+                    '☴  Skipped : ' + clc.cyan(`Request data has identical with previous result\n`)
+                );
+
+                typeof alphas[posAlpha + 1] !== 'string'
+                    ? resolver({ObjectURI, Proxy, Proxies})
+                    : callInit(posAlpha + 1, startPosition);
+                return;
+            }
+            lastHash[currentAlphabet] = currentHash;
             if (global.verbose) {
                 console.log(
-                    clc.blue(`\n# Found: (${counted}) total data on alpha: (${alphas[posAlpha]}), and page: (${posRange})`)
+                    '☴  Found  : ' + clc.cyan(`[${clc.blue(counted)}] total data with alpha: [${clc.blue(alphas[posAlpha])}], in page: [${clc.blue(posRange)}]\n`)
                 );
             }
 
@@ -193,7 +311,7 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 currentIncrementRanges[posAlpha] = startPosition;
             }
 
-            if (currentIncrementRanges[posAlpha] >= (ranges.length-1)) {
+            if (currentIncrementRanges[posAlpha] >= (ranges.length - 1)) {
                 typeof alphas[posAlpha + 1] !== 'string'
                     ? resolver({ObjectURI, Proxy, Proxies})
                     : callInit(posAlpha + 1, startPosition);
@@ -213,6 +331,5 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
         })
     );
 
-    // init
     callInit(0, startPosition);
 });

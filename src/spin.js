@@ -37,11 +37,17 @@ process.on('SIGINT', () => {
 });
 
 let lastSpinner = '';
-spin.prototype.start = function(text, color, periodLength = 3, spinnerType = 21) {
+spin.prototype.setDefaultSpinnerString = function(spinnerType) {
+    if (is.number(spinnerType)) {
+        this.setSpinnerString(spinnerType);
+    }
+};
+spin.prototype.start = function(text, color, periodLength = 3, spinnerType = null) {
     // stop last spinned
     if (lastSpinner && typeof lastSpinner.stop === 'function') {
         lastSpinner.stop();
     }
+
     lastSpinner = this;
     periodLength = is.boolean(periodLength) ? 3 : periodLength;
     periodLength = is.number(periodLength)
@@ -95,14 +101,15 @@ spin.prototype.start = function(text, color, periodLength = 3, spinnerType = 21)
     }
     onProcess = true;
     process.stdout.write('\x1b[?25l');
+    let _delay = this.delay < 60 ? 7 : 4;
     this.id = setInterval(function() {
         let msg = self.text.indexOf('%s') > -1
             ? self.text.replace('%s', self.chars[current])
             : self.chars[current] + ' ' + self.text;
         if (periodLength) {
-            if (! period2 || period2 > 4) {
+            if (! period2 || period2 > _delay) {
                 if (period % periodLength === 0) {
-                    msg = msg.replace(/[.]{1,3}/, '');
+                    msg = msg.replace(/[.]{1,3}\s*$/, '');
                     lastText = '';
                     period = 0;
                 } else if (period < periodLength) {
@@ -120,8 +127,10 @@ spin.prototype.start = function(text, color, periodLength = 3, spinnerType = 21)
 
     return this;
 };
+
 spin.prototype.stop = function(clear) {
     onProcess = false;
+    lastSpinner = null;
     process.stdout.write('\x1b[?25h\n');
     clearInterval(this.id);
     this.id = undefined;

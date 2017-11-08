@@ -23,9 +23,9 @@
  */
 
 const {Client} = require('p-proxies').Request;
-const Socks5ClientHttpsAgent = require('socks5-https-client/lib/Agent');
+const Socks5ClientHttpsAgent = require('./sockagent');
 
-const RequestSock = (url, options = {}, proxyHost, proxyPort) => {
+const RequestSock = (url, options = {}, proxyHost, proxyPort, socksUsername, sockPassword) => {
     let socketOpt = {
         socksHost: proxyHost,
         socksPort: proxyPort
@@ -36,14 +36,23 @@ const RequestSock = (url, options = {}, proxyHost, proxyPort) => {
     } else if (typeof options.timeout === "number") {
         socketOpt.timeout = options.timeout;
     }
+    if (typeof socksUsername !== 'undefined') {
+        socketOpt.socksUsername = socksUsername;
+        socketOpt.sockPassword  = sockPassword || '';
+    }
 
     options.agent = new Socks5ClientHttpsAgent(socketOpt);
+
     return new Promise(
-        (resolve, reject) => Client(
-            url,
-            options,
-            (error, response, body) => resolve({error, response, body})
-        )
+        (resolve, reject) => {
+            let client = Client(
+                url,
+                options,
+                (error, response, body) => resolve({error, response, body})
+            );
+            client.on('timeout', () => client.emit('timeout', new Error('ESOCKETTIMEDOUT')));
+            return client;
+        }
     );
 };
 

@@ -23,7 +23,12 @@
  */
 
 const {RequestSock, Request} = require('../src/request');
-const {convertBaseURL} = require('../src/url');
+const {convertBrowseURL, convertCompanyseURL} = require('../src/url');
+const sha1 = require('../src/sha1');
+const redis = require('redis');
+const redisClient = redis.createClient();
+const clc = require('cli-color');
+
 /**
  * @type {{jQuery}}
  */
@@ -35,23 +40,36 @@ if (typeof global.spinner === 'undefined') {
 let verbose = typeof global.verbose !== 'undefined'
     && global.verbose;
 const jSelector = 'ul a.pagination-companies';
-const Resolver = (body) => {
-    body = $(body).find(jSelector);
-    let result = {};
-    body.each(function() {
-        if (typeof $(this).attr('href') === 'string') {
-            let base  = $(this).attr('href').toString().replace(/^\/+/, '');
-            if (base === '') {
-                return;
-            }
-            base = base.replace(/^(\/+)?[^\/]+\/[^\/]+\//, '');
-            let inner = $(this).contents().text() || '';
+let Resolver = (
+    body,
+    url
+) => {
+    return new Promise((resolve, reject) => {
+        body = $(body).find(jSelector);
+        let result = {};
+        body.each(function() {
+            if (typeof $(this).attr('href') === 'string') {
+                let base  = $(this).attr('href').toString().replace(/^\/+/, '');
+                if (base === '') {
+                    return;
+                }
+                base = base.replace(/^(\/+)?[^\/]+\/[^\/]+\//, '');
+                let inner = $(this).contents().text() || '';
                 inner = inner.replace(/(\s)+/g, '$1').replace(/^\s+|\s+$/, '');
-            result[base] = inner;
+                result[base] = inner;
+            }
+        });
+        try {
+            if (global.verbose) {
+                console.info('☴  Save   : '+clc.cyan(`data with key: `) + clc.blue(sha1(url)) + clc.cyan(` to cache`));
+            }
+            redisClient.set(sha1(url), JSON.stringify(result), 'EX', 3600*24*3);
+        } catch (err) {
+            // pass
         }
-    });
 
-    return result;
+        resolve(result);
+    });
 };
 
 let cSockRequest = (
@@ -64,16 +82,21 @@ let cSockRequest = (
 ) => {
     let isUseProxy = !!(proxyPort && proxyHost);
     let methodRequest = isUseProxy ? RequestSock : Request;
-    if (verbose) {
+    if (global.verbose) {
         spinner.start(
-            (isUseProxy
-                    ? `\nConnect to : [${url}] Using Proxy: [${proxyHost}:${proxyPort}]`
-                    : `\nConnect to : [${url}] Without Proxy`
-            ),
-            'cyan.italic'
+            'Request: '+
+            clc.cyan(isUseProxy
+                ? `Proxy[${proxyHost}:${proxyPort}] -> [${url}]`
+                : `[${url}]`
+            )
         );
     }
-
+    if (typeof errorCallback !== "function") {
+        errorCallback = () => {};
+    }
+    if (typeof resolveCallback !== "function") {
+        resolveCallback = () => {};
+    }
     methodRequest(
         url,
         options,
@@ -84,13 +107,6 @@ let cSockRequest = (
             if (verbose) {
                 spinner.stop();
             }
-            if (typeof errorCallback !== "function") {
-                errorCallback = () => {};
-            }
-            if (typeof resolveCallback !== "function") {
-                resolveCallback = () => {};
-            }
-
             if (response && response.statusCode === 404) {
                 errorCallback(404);
                 return;
@@ -99,10 +115,13 @@ let cSockRequest = (
                 errorCallback(error);
                 return;
             }
-            let result = Resolver(body);
-            if (typeof resolveCallback === 'function') {
-                resolveCallback(result);
-            }
+            Resolver(body, url).then((result) => {
+                if (typeof resolveCallback === 'function') {
+                    resolveCallback(result)
+                }
+            }).catch((error) => {
+                errorCallback(error);
+            });
         }
     ).catch((error) => {
         if (verbose) {
