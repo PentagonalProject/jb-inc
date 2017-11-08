@@ -25,6 +25,7 @@ const writeData = require('../src/writer');
 const is = require('../src/is');
 const clc = require('cli-color');
 
+const redisClient = require('redis').createClient();
 const {RequestSock, Request} = require('../src/request');
 const {convertBrowseURL, convertCompanyURL} = require('../src/url');
 const sha1 = require('../src/sha1');
@@ -50,6 +51,7 @@ let CurrentProxy = null;
 
 let cSockRequest = (
     name,
+    baseUrl,
     url,
     options,
     errorCallback,
@@ -175,6 +177,13 @@ let cSockRequest = (
         if (details.email === "" && details.phone === "") {
             founds = false;
         }
+
+        redisClient.set(
+            sha1(baseUrl),
+            founds ? JSON.stringify(details) : JSON.stringify([name]),
+            'EX',
+            360* 24 * 7 *4
+        );
         resolveCallback(founds ? details : name);
     }).catch(errorCallback);
 };
@@ -206,6 +215,7 @@ const attach = (
 
     cSockRequest(
         name,
+        url,
         convertCompanyURL(url),
         options,
         (error) => {
@@ -271,12 +281,15 @@ const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promi
     let mustBeRequest = [];
     let count = -1;
     let Total = 0;
+    let numberPerAlpha = ! CurrentProxy
+        ? 13
+        : 5;
     for (let url in Object) {
         if (!Object.hasOwnProperty(url)) {
             continue;
         }
 
-        if ((Total % 5) === 0) {
+        if ((Total % numberPerAlpha) === 0) {
             Total++;
             count++;
             mustBeRequest[count] = {};
@@ -311,50 +324,69 @@ const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promi
 
         console.log('-----------------------------------------');
         console.log(clc.cyan.bold(`\nRequesting async request at ${TLength} companies.\n`));
+        let csvExporter = (result) => {
+            totalExecuted++;
+            if (is.object(result)) {
+                console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
+                let csvData = "";
+                for (let e in result) {
+                    if (!result.hasOwnProperty(e)) {
+                        // console.log(e);
+                        // process.exit();
+                        continue;
+                    }
+                    if (csvData !== "") {
+                        csvData += ",";
+                    }
+                    csvData += JSON.stringify(result[e]);
+                }
+
+                // console.log(csvData);
+                fs.appendFile(
+                    dataPath,
+                    csvData + "\r\n",
+                    function (err) {
+                        // console.log(err);
+                        // pass
+                    });
+            } else {
+                console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
+            }
+        };
 
         for (let name in mustBeRequest[curr]) {
             if (!mustBeRequest[curr].hasOwnProperty(name)) {
                 continue;
             }
-            attach({name, url: mustBeRequest[curr][name]},
-                {
-                    timeout: 7000,
-                    socketTimeOut: 2500,
-                },
-                (error) => {
-                    console.error(error);
-                    totalExecuted++;
-                },
-                (result) => {
-                    totalExecuted++;
-                    if (is.object(result)) {
-                        console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
-                        let csvData = "";
-                        for (let e in result) {
-                            if (!result.hasOwnProperty(e)) {
-                                console.log(e);
-                                process.exit();
-                                continue;
-                            }
-                            if (csvData !== "") {
-                                csvData += ",";
-                            }
-                            csvData += JSON.stringify(result[e]);
+            // console.log(mustBeRequest[curr][name]);
+            redisClient.get(sha1(mustBeRequest[curr][name]), function (err, value) {
+                if (!err && is.string(value)) {
+                    try {
+                        value = JSON.parse(value.toString());
+                        if (is.array(value)) {
+                            csvExporter(name);
+                            return;
+                        } else if (is.object(value) && is.string(value.name)) {
+                            csvExporter(value);
+                            return;
                         }
-
-                        // console.log(csvData);
-                        fs.appendFile(
-                            dataPath,
-                            csvData + "\r\n",
-                            function (err) {
-                                // console.log(err);
-                                // pass
-                            });
-                    } else {
-                        console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
+                    } catch (error) {
+                        err = error;
                     }
                 }
-            );
+                // todo
+                attach({name, url: mustBeRequest[curr][name]},
+                    {
+                        timeout: 7000,
+                        socketTimeOut: 2500,
+                    },
+                    (error) => {
+                        console.error(error);
+                        totalExecuted++;
+                    },
+                    csvExporter
+                );
+            });
         }
 
         console.log();

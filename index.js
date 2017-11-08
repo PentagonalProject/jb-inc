@@ -24,7 +24,7 @@
 
 "use strict";
 // dev only
-global.alpha = ['a'];
+// global.alpha = ['a'];
 global.verbose = true;
 const proxyCountry = [
     // 'SG',
