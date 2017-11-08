@@ -23,18 +23,19 @@
  */
 
 "use strict";
-
+// dev only
+global.alpha = ['a'];
 global.verbose = true;
 const proxyCountry = [
-    'SG',
-    'HK',
-    'US',
-    'ID',
-    'TW',
-    'AU',
-    'DE',
-    'CA',
-    'UK'
+    // 'SG',
+    // 'HK',
+    // 'US',
+    // 'ID',
+    // 'TW',
+    // 'AU',
+    // 'DE',
+    // 'CA',
+    // 'UK'
 ];
 
 /*!
@@ -64,10 +65,11 @@ const ProxyCall = require('./app/listProxies');
 const CompaniesURI = require('./app/listCompanyURI');
 
 
-let nocache = false;
+let nocache = true;
 for (let i = 2; process.argv.length > i; i++) {
     nocache = !!(typeof process.argv[i] === 'string' && process.argv[i].toLowerCase().match(/no-?cache/i));
 }
+
 const processorCompanies = (proxyCountry) => (proxies) => {
     if (global.verbose) {
         console.log('');
@@ -82,7 +84,7 @@ const processorCompanies = (proxyCountry) => (proxies) => {
     if (!nocache) {
         try {
             let stats = fs.statSync(companyPath);
-            if (((new Date().getTime() - stats.mtime) / 1000) < 24 * 3600 * 3) {
+            if (1 === 1) { //((new Date().getTime() - stats.mtime) / 1000) < 24 * 3600 * 3) {
                 let ObjectURI = fs.readFileSync(companyPath);
                 ObjectURI = JSON.parse(ObjectURI.toString());
                 let Proxy = null;
@@ -142,10 +144,7 @@ const processorData = ({ObjectURI, Proxy, Proxies}) => {
     let key = sha1(JSON.stringify(proxyCountry));
     redisClient.set(key, JSON.stringify(proxies), 'EX', 3600);
 
-    // @todo to processing parse data
-    // console.log(Proxies);
-    // console.log(ObjectURI);
-    // console.log(Proxy);
+    return require('./app/listData')(ObjectURI, Proxy, proxies);
 };
 
 const Proxy = (proxyCountry, cacheTime) => {
@@ -183,6 +182,15 @@ Proxy(proxyCountry, 3600)
             JSON.stringify(ObjectURI, null, 2),
             () => {
                 return processorData({ObjectURI, Proxy, Proxies})
+                    .then(() => {
+                        spinner.stop();
+                        process.exit();
+                    })
+                    .catch((err) => {
+                        spinner.stop();
+                        console.log(err);
+                        process.exit();
+                    })
             }
         );
     })

@@ -48,10 +48,13 @@ const convertBrowseURL = (alpha, range) => {
 
     // [a-z]-([1-9]([0-9])?|100)
     browseURL = browseURL || Buffer.from(baseBrowseURLH, 'hex').toString('utf8');
+    if (alpha === 'more') {
+        return browseURL + 'more';
+    }
     return browseURL + (is.string(alpha) ? alpha.toLowerCase() : 'a') + '-' + range;
 };
 
-const convertCompanyseURL = (url) => {
+const convertCompanyURL = (url) => {
     url = is.string(url) ? url.replace(/^\/+/, '') : '';
     return convertBaseURL('/en/companies/' + url);
 };
@@ -61,5 +64,5 @@ module.exports = {
     baseBrowseURL: baseBrowseURLH,
     convertBaseURL,
     convertBrowseURL,
-    convertCompanyseURL
+    convertCompanyURL
 };

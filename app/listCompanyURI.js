@@ -44,7 +44,14 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
 
     const startPosition = 1;
     const ranges = new Array(100);
-    const alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
+    let alphas = [];
+    if (is.array(global['alpha'])) {
+        alphas = global['alpha'];
+    } else {
+        alphas = 'abcdefghijklmnopqrstuvwxyz'.split('');
+        // add 1
+        alphas.unshift('more');
+    }
 
     // var
     let currentIncrementRanges = {};
@@ -276,7 +283,7 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 redisClient.set(keyProxyCache, JSON.stringify(lastProxy), 'EX', 3600);
             }
             let currentAlphabet = alphas[posAlpha];
-            if (!is.array(ObjectURI[currentAlphabet])) {
+            if (!is.object(ObjectURI[currentAlphabet])) {
                 ObjectURI[currentAlphabet] = {};
             }
             let counted = 0;
@@ -286,6 +293,13 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 }
                 counted++;
                 ObjectURI[currentAlphabet][name] = result[name];
+            }
+
+            if (currentAlphabet === 'more') {
+                typeof alphas[posAlpha + 1] !== 'string'
+                    ? resolver({ObjectURI, Proxy, Proxies})
+                    : callInit(posAlpha + 1, startPosition);
+                return;
             }
 
             // check hash
@@ -300,6 +314,7 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                     : callInit(posAlpha + 1, startPosition);
                 return;
             }
+
             lastHash[currentAlphabet] = currentHash;
             if (global.verbose) {
                 console.log(

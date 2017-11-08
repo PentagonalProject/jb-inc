@@ -23,7 +23,7 @@
  */
 
 const {RequestSock, Request} = require('../src/request');
-const {convertBrowseURL, convertCompanyseURL} = require('../src/url');
+const {convertBrowseURL, convertCompanyURL} = require('../src/url');
 const sha1 = require('../src/sha1');
 const redis = require('redis');
 const redisClient = redis.createClient();
@@ -55,6 +55,9 @@ let Resolver = (
                 }
                 base = base.replace(/^(\/+)?[^\/]+\/[^\/]+\//, '');
                 let inner = $(this).contents().text() || '';
+                if (inner.length < 2) {
+                    return;
+                }
                 inner = inner.replace(/(\s)+/g, '$1').replace(/^\s+|\s+$/, '');
                 result[base] = inner;
             }
@@ -63,7 +66,7 @@ let Resolver = (
             if (global.verbose) {
                 console.info('☴  Save   : '+clc.cyan(`data with key: `) + clc.blue(sha1(url)) + clc.cyan(` to cache`));
             }
-            redisClient.set(sha1(url), JSON.stringify(result), 'EX', 3600*24*3);
+            redisClient.set(sha1(url), JSON.stringify(result), 'EX', 3600*24*15);
         } catch (err) {
             // pass
         }

@@ -39,8 +39,18 @@ let Is = function () {
     this.null   = this.nill;
     this.array  =  (arg) => this.objectTypeof(arg) === '[object Array]';
     this.object = (arg) => this.objectTypeof(arg) === '[object Object]';
-    this.function = this.fn;
     this.callable = this.fn;
+    this.array_search = (offset, array) => {
+        if (this.undefined(offset) || !this.array(array)) {
+            return false;
+        }
+        offset = array.indexOf(offset);
+        return offset > -1 ? offset : false;
+    };
+    this.array_key_exists = (offset, array) => {
+        return this.array_search(offset, array) !== false;
+    };
+    this.undefined = (arg) => typeof arg === 'undefined';
     // alias
     this.fn =     (arg) => typeof arg === 'function';
     this.commonObject = (arg) => typeof arg === 'object';
