@@ -253,7 +253,11 @@ const attach = (
                             return;
                         }
                         timedOuted[url]++;
-                        attach({name, url}, options, errorCallback, resolveCallback, retryTimeOut, true);
+                        if ((timedOuted[url] % 3) === 0) {
+                            setTimeout(() => attach({name, url}, options, errorCallback, resolveCallback, retryTimeOut, true), 1800);
+                        } else {
+                            attach({name, url}, options, errorCallback, resolveCallback, retryTimeOut, true);
+                        }
                     break;
             }
         },
@@ -324,7 +328,7 @@ const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promi
                 (result) => {
                     totalExecuted++;
                     if (is.object(result)) {
-                        console.log(clc.blue('☴  Data   : ') + `for ${result.name} found append to file.`);
+                        console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
                         let csvData = "";
                         for (let e in result) {
                             if (!result.hasOwnProperty(e)) {
@@ -347,7 +351,7 @@ const RequestingPerAlpha = (currentOffset, Object, resolve, reject) => new Promi
                                 // pass
                             });
                     } else {
-                        console.log(clc.red('☴  Data   : ') + `for ${result} not found.`);
+                        console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
                     }
                 }
             );
