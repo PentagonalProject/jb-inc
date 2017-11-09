@@ -21,10 +21,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+const defaultMax = 35;
 const writeData = require('../src/writer');
 const is = require('../src/is');
 const clc = require('cli-color');
-
+const {convertCompanyURL} = require('../src/url')
 const redisClient = require('redis').createClient();
 const {RequestSock, Request} = require('../src/request');
 const sha1 = require('../src/sha1');
@@ -241,25 +242,29 @@ const attach = (
                         errorCallback(error);
                         return;
                     }
-                    // console.log(error);
-                    // do again
-                    if (!isUsedProxy) {
-                        console.log(clc.red('☴  Error  : ') + `Connection to ${url} timeout! Retry to connect ....`);
-                    } else {
-                        console.log(clc.red('☴  Error  : ') + `Timeout Proxy [${proxyHost}:${proxyPort}]. Retry to connect ....`);
+                    if (global.verbose) {
+                        // console.log(error);
+                        // do again
+                        if (!isUsedProxy) {
+                            console.log(clc.red('☴  Error  : ') + `Connection to ${url} timeout! Retry to connect ....`);
+                        } else {
+                            console.log(clc.red('☴  Error  : ') + `Timeout Proxy [${proxyHost}:${proxyPort}]. Retry to connect ....`);
+                        }
                     }
                     attach({name, url}, options, errorCallback, resolveCallback, retryTimeOut++, true);
                     break;
                 default:
                         CurrentProxy = Proxies.shift();
-                        if (isUsedProxy) {
-                            if (CurrentProxy) {
-                                console.log(clc.red('☴  Error  : ') + `${error.message} . Retry with proxy[${CurrentProxy.ip}: ${CurrentProxy.port}].`);
+                        if (global.verbose) {
+                            if (isUsedProxy) {
+                                if (CurrentProxy) {
+                                    console.log(clc.red('☴  Error  : ') + `${error.message} . Retry with proxy[${CurrentProxy.ip}: ${CurrentProxy.port}].`);
+                                } else {
+                                    console.log(clc.red('☴  Error  : ') + `${error.message} . Retry to connect without proxy.`);
+                                }
                             } else {
-                                console.log(clc.red('☴  Error  : ') + `${error.message} . Retry to connect without proxy.`);
+                                console.log(clc.red('☴  Error  : ') + `${error.message} . Retry to connect.`);
                             }
-                        } else {
-                            console.log(clc.red('☴  Error  : ') + `${error.message} . Retry to connect.`);
                         }
                         if (!CurrentProxy) {
                             errorCallback(error);
@@ -287,12 +292,16 @@ const attach = (
     )
 };
 
+let cacheHash = [];
 const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject) => new Promise((res) => {
     let mustBeRequest = [];
     let count = -1;
     let Total = 0;
     let numberPerAlpha = ! CurrentProxy
-        ? 20
+        ? (is.number(global['maxNumber']) && global['maxNumber'] > 5
+            ? global['maxNumber']
+            : defaultMax
+        )
         : 5;
     for (let url in Object) {
         if (!Object.hasOwnProperty(url)) {
@@ -335,12 +344,24 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             console.log('-----------------------------------------');
             console.log(clc.cyan.bold(`\nRequesting async request at ${TLength} companies.\n`));
         }
-        let csvExporter = (result) => {
+        let csvExporter = (result, isCache, isArray) => {
             totalExecuted++;
-            if (is.object(result)) {
+            if (! isArray) {
+                let key = sha1(result.url + result.name);
+                if (is.array_contains(key)) {
+                    if (!isCache && !global.verbose) {
+                        console.log(clc.cyan('☴  Data   : ') + `Skipped duplicate [ ${result.name} ] for appending file.`);
+                    }
+                    return;
+                }
                 if (global.verbose) {
                     console.log(clc.blue('☴  Data   : ') + `for [ ${result.name} ] found append to file.`);
                 }
+                if (cacheHash.length >= numberPerAlpha) {
+                    cacheHash.shift();
+                }
+                cacheHash.push(key);
+
                 let csvData = "";
                 for (let e in result) {
                     if (!result.hasOwnProperty(e)) {
@@ -353,7 +374,6 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
                     }
                     csvData += JSON.stringify(result[e]);
                 }
-
                 // console.log(csvData);
                 fs.appendFile(
                     dataPath,
@@ -363,7 +383,7 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
                         // pass
                     });
             } else {
-                if (global.verbose) {
+                if (global.verbose && !isCache) {
                     console.log(clc.red('☴  Data   : ') + `for [ ${result} ] not found.`);
                 }
             }
@@ -374,31 +394,19 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
                 continue;
             }
 
-            // todo
-            attach({name, url: mustBeRequest[curr][name]},
-                {
-                    timeout: 7000,
-                    socketTimeOut: 2500,
-                },
-                (error) => {
-                    console.error(error);
-                    totalExecuted++;
-                },
-                csvExporter
-            );
             // console.log(mustBeRequest[curr][name]);
             redisClient.get(sha1(mustBeRequest[curr][name]), function (err, value) {
                 if (!err && is.string(value)) {
                     try {
                         value = JSON.parse(value.toString());
-                        if (is.array(value)) {
-                            csvExporter(name);
-                            return;
-                        } else if (is.object(value) && is.string(value.name) && is.string(value.url)) {
-                            csvExporter(value);
+                        let isArray = is.array(value);
+                        if (isArray || is.object(value) && is.string(value.name) && is.string(value.url)) {
+                            csvExporter(isArray ? name : value, true, isArray);
                             return;
                         }
                     } catch (error) {
+                        console.log(error);
+                        process.exit();
                         // err = error;
                     }
                 }
@@ -417,11 +425,6 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             });
         }
 
-        if (!global.verbose) {
-            console.log();
-            spinner.start(clc.cyan.bold('Please wait'));
-            console.log();
-        }
         let totalExecuted = 0;
         let uInterval = setInterval(() => {
             if (totalExecuted >= TLength) {
@@ -431,7 +434,6 @@ const RequestingPerAlpha = (currentOffset, arrayKeySet, Object, resolve, reject)
             }
         }, 700);
     };
-
     init();
 }).then((Result) => {
     resolve({Result: Result, offset: currentOffset, arrayKeySet: arrayKeySet});
@@ -519,11 +521,13 @@ const ProcessAll = (ObjectURI, Proxy, proxies) => new Promise((resolve, reject) 
     callItAll();
 });
 
-module.exports = (ObjectURI, Proxy, Proxies) => (
-    new Promise((resolve, reject) => writeData(
-        dataPath,
-        '"Name", "Phone", "Url", "Email", "Industry", "Working Hours", "Location", "Employee Size", "Benefits", "Language", "Description"\r\n',
-        function (err) {
+module.exports = (ObjectURI, Proxy, Proxies) => (new Promise((resolve, reject) => writeData(
+    dataPath,
+    '"Name", "Phone", "Url", "Email", "Industry", "Working Hours", "Location", "Employee Size", "Benefits", "Language", "Description"\r\n',
+    function (err) {
+        if (!global.verbose) {
+            spinner.start(clc.cyan.bold('Please wait'));
+        }
         resolve(ProcessAll(ObjectURI,Proxy, Proxies));
     })).then((cb) => cb).catch((err) => {
         spinner.stop();

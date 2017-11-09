@@ -263,7 +263,9 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
                 req();
                 return;
             }
-            console.info(`☴  Cache  : ${clc.cyan(`Found for ${currentURI}`)}`);
+            if (global.verbose) {
+                console.info(`☴  Cache  : ${clc.cyan(`Found for ${currentURI}`)}`);
+            }
             resolve(value);
         });
     };
@@ -305,10 +307,11 @@ module.exports = (proxyCountry, Proxies, options = {}) => new Promise((resolver,
             // check hash
             let currentHash = sha1(JSON.stringify(ObjectURI[currentAlphabet]));
             if (typeof lastHash[currentAlphabet] !== 'undefined' && currentHash === lastHash[currentAlphabet]) {
-                console.log(
-                    '☴  Skipped : ' + clc.cyan(`Request data has identical with previous result\n`)
-                );
-
+                if (global.verbose) {
+                    console.log(
+                        '☴  Skipped : ' + clc.cyan(`Request data has identical with previous result\n`)
+                    );
+                }
                 typeof alphas[posAlpha + 1] !== 'string'
                     ? resolver({ObjectURI, Proxy, Proxies})
                     : callInit(posAlpha + 1, startPosition);

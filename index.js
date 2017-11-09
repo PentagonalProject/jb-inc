@@ -72,6 +72,7 @@ for (let i = 2; process.argv.length > i; i++) {
 
 const processorCompanies = (proxyCountry) => (proxies) => {
     if (global.verbose) {
+        spinner.stop();
         console.log('');
         for (let code in proxies) {
             if (!proxies.hasOwnProperty(code)) {
@@ -79,8 +80,8 @@ const processorCompanies = (proxyCountry) => (proxies) => {
             }
             console.log('☴  Found  : ' + clc.cyan(`proxy code[${code}] with ${proxies[code].length} total.`));
         }
+        console.log('-----------------------------------------');
     }
-    console.log('-----------------------------------------');
     if (!nocache) {
         try {
             let stats = fs.statSync(companyPath);
